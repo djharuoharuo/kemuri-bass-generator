@@ -1,0 +1,7 @@
+librosa>=0.10.0
+soundfile>=0.12.0
+music21>=9.1.0
+midiutil>=1.2.1
+python-osc>=1.8.3
+tkinterdnd2>=0.3.0
+numpy>=1.24.0
