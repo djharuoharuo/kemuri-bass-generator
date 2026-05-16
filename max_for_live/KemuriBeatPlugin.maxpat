@@ -298,11 +298,11 @@
 					"presentation_rect" : [ 220.0, 51.0, 65.0, 15.0 ],
 					"saved_attribute_attributes" : 					{
 						"valueof" : 						{
-							"parameter_enum" : [ "4", "8", "16" ],
-							"parameter_initial" : [ 0 ],
+							"parameter_enum" : [ "1", "2", "4", "8", "16" ],
+							"parameter_initial" : [ 2 ],
 							"parameter_initial_enable" : 1,
 							"parameter_longname" : "Bars",
-							"parameter_mmax" : 2,
+							"parameter_mmax" : 4,
 							"parameter_modmode" : 0,
 							"parameter_shortname" : "Bars",
 							"parameter_type" : 2
@@ -651,19 +651,7 @@
 				}
 
 			}
-, 			{
-				"box" : 				{
-					"id" : "obj-bars-expr",
-					"maxclass" : "newobj",
-					"numinlets" : 1,
-					"numoutlets" : 1,
-					"outlettype" : [ "" ],
-					"patching_rect" : [ 55.0, 340.0, 200.0, 22.0 ],
-					"text" : "expr ($i1==0)?4:($i1==1)?8:16"
-				}
-
-			}
-, 			{
+,  			{
 				"box" : 				{
 					"id" : "obj-udp-analysis",
 					"maxclass" : "newobj",
@@ -893,13 +881,6 @@
 			}
 , 			{
 				"patchline" : 				{
-					"destination" : [ "obj-bars-expr", 0 ],
-					"source" : [ "menu-bars", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
 					"destination" : [ "obj-js", 6 ],
 					"source" : [ "menu-mode", 0 ]
 				}
@@ -929,7 +910,7 @@
 , 			{
 				"patchline" : 				{
 					"destination" : [ "obj-js", 4 ],
-					"source" : [ "obj-bars-expr", 0 ]
+					"source" : [ "menu-bars", 0 ]
 				}
 
 			}

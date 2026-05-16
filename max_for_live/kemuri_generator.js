@@ -74,9 +74,9 @@ function msg_int(v) {
         case 2:  g_complexity   = v; break;
         case 3:  g_fill         = v; break;
         case 4:
-            // patcher sends expr output: 4, 8, or 16 (from menu index 0,1,2)
-            // handle both raw index and converted value defensively
-            g_bars = (v <= 2) ? (v === 0 ? 4 : v === 1 ? 8 : 16) : v;
+            // menu index 0-4 → 1,2,4,8,16 bars (direct connection from menu-bars)
+            var barMap = [1, 2, 4, 8, 16];
+            g_bars = barMap[Math.max(0, Math.min(4, v))];
             post("KemuriBeat: bars=" + g_bars + "\n");
             break;
         case 5:  g_root         = v; break;
