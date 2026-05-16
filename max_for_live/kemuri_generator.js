@@ -22,6 +22,22 @@ var g_source_slot  = 0;
 var KS_MAJOR = [6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
 var KS_MINOR = [6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
 
+// Chord triad templates (1, 3 or b3, 5 emphasized; non-chord tones lightly weighted)
+// Position 0 = root, 4 = maj3, 3 = min3, 7 = 5th.
+// Extra: b7 (10) lightly weighted for minor — supports m7 / dominant readings.
+var CHORD_TMPL_MAJ = [1.0, 0.05, 0.2, 0.05, 0.8, 0.2, 0.05, 0.8, 0.05, 0.2, 0.05, 0.3];
+var CHORD_TMPL_MIN = [1.0, 0.05, 0.2, 0.8,  0.05,0.2, 0.05, 0.8, 0.05, 0.2, 0.4,  0.05];
+
+// Progression / track analysis state (filled by analyzeSource)
+var _rawNotes              = [];   // {pitch, start, duration, velocity}
+var g_progBar              = [];   // 1-bar chord progression
+var g_progHalfBar          = [];   // 2-beat chord progression
+var g_clipBars             = 0;
+var g_loopBars             = 0;
+var g_density              = 0;
+var g_suggestedComplexity  = -1;
+var g_useProgression       = false;
+
 // ── Style patterns ────────────────────────────────────────────
 var STYLES = [
     // 0: Boom-Bap
@@ -121,7 +137,10 @@ function generate() {
         var varLabel = (g_variations > 1)
             ? g_variations + "パターン生成 (Slot" + g_slot + "〜" + (g_slot + g_variations - 1) + ")"
             : STYLES[g_style].name;
-        outlet(0, "set", "Done: " + varLabel + " | " + keyName + " | " + g_bars + "bars | BPM " + bpm.toFixed(1));
+        var progLabel = g_useProgression
+            ? " | Prog-follow(" + g_progBar.length + "ch, loop=" + g_loopBars + ")"
+            : "";
+        outlet(0, "set", "Done: " + varLabel + " | " + keyName + " | " + g_bars + "bars | BPM " + bpm.toFixed(1) + progLabel);
     } catch(e) {
         outlet(0, "set", "ERROR: " + e);
         post("KemuriBeat ERROR: " + e + "\n");
@@ -149,28 +168,31 @@ function generate() {
 //         scale-tone passing on weak 16ths.
 //   Lo-Fi: half-note / dotted feel; root and 5th, very sparse.
 function buildNotes(bpm) {
-    var ctx = makeKeyContext();
     var notes = [];
-
-    // Map fill 0-100 → number of fill bars per 4-bar phrase (0..4)
-    //   0       = 0 fill bars
-    //   1-25    = 1
-    //   26-50   = 2
-    //   51-75   = 3
-    //   76-100  = 4 (all bars get extra activity)
     var fillBars = (g_fill <= 0) ? 0 : Math.min(4, Math.ceil(g_fill / 25.0));
+    // Jazz uses half-bar resolution (ii-V etc.); other styles use 1-bar
+    var useHalfBar = (g_style === 1);
 
     for (var bar = 0; bar < g_bars; bar++) {
+        var chordsThis = _chordAtBar(bar, useHalfBar);
+        var chordsNext = _chordAtBar(bar + 1, useHalfBar);
+
+        var ctx     = makeKeyContext(chordsThis[0].root, chordsThis[0].quality);
+        var ctxMid  = useHalfBar ? makeKeyContext(chordsThis[1].root, chordsThis[1].quality) : null;
+        var nextCtx = makeKeyContext(chordsNext[0].root, chordsNext[0].quality);
+
         var barInPhr        = bar % 4;
         var isLastOfPhrase  = (barInPhr === 3);
         var isLastBarTotal  = (bar === g_bars - 1);
-        // Development: stronger turnaround in last bar of long sections
         var isDevelopment   = (g_bars >= 8) && isLastBarTotal;
         var midDevelopment  = (g_bars >= 16) && (bar === 7);
         var isFill          = fillBars > 0 && barInPhr >= (4 - fillBars);
 
         var barNotes = generateBar(g_style, {
             ctx: ctx,
+            ctxMid: ctxMid,            // half-bar chord (Soul-Jazz only)
+            nextCtx: nextCtx,          // next bar's first chord (for approach notes)
+            useHalfBar: useHalfBar,
             barIndex: bar,
             barInPhrase: barInPhr,
             isLastOfPhrase: isLastOfPhrase,
@@ -191,27 +213,47 @@ function buildNotes(bpm) {
 }
 
 // ── Key/scale context ──────────────────────────────────────────
-function makeKeyContext() {
-    var isMinor = (g_mode != 0);
+// Builds a context for a specific chord (root pitch class + quality "maj"/"min").
+// When no args, falls back to global key (g_root + g_mode).
+function makeKeyContext(rootPc, quality) {
+    if (rootPc === undefined) rootPc = g_root;
+    if (quality === undefined) quality = (g_mode == 0 ? "maj" : "min");
+    var isMinor = (quality === "min");
     // For Boom-Bap / Lo-Fi we want a sub-bass anchor (E1-area).
     // For Jazz / Funk we want a mid-bass anchor (one octave up).
-    var lowAnchor = 24 + g_root;   // C1+root  (24..35) → sub bass
-    var midAnchor = 36 + g_root;   // C2+root  (36..47) → mid bass
-    // Diatonic scale intervals
+    var lowAnchor = 24 + rootPc;   // C1+root  (24..35) → sub bass
+    var midAnchor = 36 + rootPc;   // C2+root  (36..47) → mid bass
     var scale = isMinor ? SCALE_MINOR : SCALE_MAJOR;
-    // Chord tones (1, 3, 5)
     var chord = isMinor ? CHORD_MINOR : CHORD_MAJOR;
-    // Pentatonic for boom-bap flourishes
     var penta = isMinor ? [0,3,5,7,10] : [0,2,4,7,9];
     return {
-        root: g_root,
+        root: rootPc,
         isMinor: isMinor,
-        scale: scale,        // diatonic
-        chord: chord,        // 1-3-5
-        penta: penta,        // pentatonic
-        lowAnchor: lowAnchor,
-        midAnchor: midAnchor
+        scale: scale, chord: chord, penta: penta,
+        lowAnchor: lowAnchor, midAnchor: midAnchor
     };
+}
+
+// Returns the chord(s) playing in `barIdx`, wrapping by detected loop length.
+// `useHalfBar` returns 2 chords per bar (beats 0-1 and 2-3), otherwise 1.
+function _chordAtBar(barIdx, useHalfBar) {
+    var prog = useHalfBar ? g_progHalfBar : g_progBar;
+    if (!g_useProgression || !prog || !prog.length) {
+        var def = { root: g_root, quality: (g_mode === 0 ? "maj" : "min") };
+        return useHalfBar ? [def, def] : [def];
+    }
+    var segsPerBar  = useHalfBar ? 2 : 1;
+    var totalBars   = prog.length / segsPerBar;
+    var loop        = g_loopBars > 0 ? Math.min(g_loopBars, totalBars) : totalBars;
+    var loopBarIdx  = barIdx % Math.max(1, loop);
+    var startSeg    = loopBarIdx * segsPerBar;
+
+    var out = [];
+    for (var i = 0; i < segsPerBar; i++) {
+        var s = prog[(startSeg + i) % prog.length];
+        out.push({ root: s.root, quality: s.quality });
+    }
+    return out;
 }
 
 // Snap a pitch into the bass range without changing pitch class
@@ -275,21 +317,22 @@ function genBoomBap(p) {
         notes.push({ pitch: root, start: ghostPos, dur: 0.25 });
     }
 
-    // Turnaround on last bar of 4-bar phrase
+    // Turnaround on last bar of 4-bar phrase — approach NEXT bar's actual root
     if (p.isLastOfPhrase) {
-        // Chromatic approach (b2 below) at beat 4.5 → leads to next bar's root
-        var approach = clampBass(root - 1);                       // half-step below
+        var nextRoot = clampBass(p.nextCtx.lowAnchor);
+        // Half-step approach from above or below
+        var approach = clampBass(nextRoot + (Math.random() < 0.5 ? -1 : 1));
         notes.push({ pitch: approach, start: 3.5, dur: 0.5 });
     }
 
-    // Development (8/16-bar last bar): bigger climactic move
+    // Development (8/16-bar last bar): bigger climactic move targeting next root
     if (p.isFinalClimax) {
-        // Pentatonic walk-up to top octave then resolve
         var pent = ctx.penta;
+        var nRoot = clampBass(p.nextCtx.lowAnchor);
         notes.push({ pitch: clampBass(root + pent[1]), start: 3.0,  dur: 0.25 });
         notes.push({ pitch: clampBass(root + pent[2]), start: 3.25, dur: 0.25 });
-        notes.push({ pitch: clampBass(root + pent[3]), start: 3.5,  dur: 0.25 });
-        notes.push({ pitch: clampBass(root + pent[4]), start: 3.75, dur: 0.25 });
+        notes.push({ pitch: clampBass(nRoot - 2),      start: 3.5,  dur: 0.25 });
+        notes.push({ pitch: clampBass(nRoot - 1),      start: 3.75, dur: 0.25 });
     } else if (p.isFill) {
         // Lighter fill — one extra pentatonic note before turnaround
         var pIdx = 1 + Math.floor(Math.random() * 3);
@@ -300,62 +343,73 @@ function genBoomBap(p) {
     return notes;
 }
 
-// ── Style 1: Soul-Jazz (walking bass) ─────────────────────────
-// Quarter-note walking line: 1=root, 2=chord/scale tone,
-// 3=chord tone or approach, 4=chromatic approach to next root.
+// ── Style 1: Soul-Jazz (walking bass, half-bar harmony) ───────
+// Beats 1-2 use ctx (current chord), beats 3-4 use ctxMid (second half).
+// Beat-4 approaches the NEXT bar's first chord root by half-step (chromatic)
+// or whole-step (diatonic) — the cornerstone of walking bass.
 function genSoulJazz(p) {
-    var ctx   = p.ctx;
     var notes = [];
-    var root  = snapNear(ctx.midAnchor, ctx.midAnchor);
+    var ctxA  = p.ctx;
+    var ctxB  = p.ctxMid || p.ctx;          // half-bar chord (or same)
+    var nctx  = p.nextCtx;                  // next bar's first chord
     var comp  = p.compFactor;
 
-    // Beat 1 — always root (rarely 5th below for variety)
-    var beat1 = (Math.random() < 0.85) ? root : snapNear(root - 5, ctx.midAnchor);
+    var rootA = snapNear(ctxA.midAnchor, ctxA.midAnchor);
+    var rootB = snapNear(ctxB.midAnchor, ctxA.midAnchor);   // anchor to bar context for smoothness
+    var rootN = snapNear(nctx.midAnchor, ctxA.midAnchor);
+
+    // Beat 1 — root of chord A (rarely 5th below)
+    var beat1 = (Math.random() < 0.85) ? rootA : snapNear(rootA - 5, ctxA.midAnchor);
     notes.push({ pitch: beat1, start: 0.0, dur: 0.95 });
 
-    // Beat 2 — chord tone (3rd, 5th) or scale tone
-    var beat2 = chordOrScale(root, ctx, comp);
+    // Beat 2 — chord tone / scale tone of chord A.
+    // If chord changes on beat 3 (ctxB != ctxA), prefer chord A's 5th
+    // or a diatonic approach to chord B's root (classic walking move).
+    var beat2;
+    if (ctxB.root !== ctxA.root) {
+        // Approach to rootB
+        if (comp > 0.4 && Math.random() < 0.5) {
+            beat2 = clampBass(rootB + (Math.random() < 0.5 ? -1 : 1));   // chromatic
+        } else {
+            beat2 = snapNear(rootA + 7, ctxA.midAnchor);                 // 5th of A
+        }
+    } else {
+        beat2 = chordOrScale(rootA, ctxA, comp);
+    }
     notes.push({ pitch: beat2, start: 1.0, dur: 0.95 });
 
-    // Beat 3 — chord tone, often the 5th
-    var beat3;
-    if (Math.random() < 0.55) {
-        beat3 = snapNear(root + 7, ctx.midAnchor);              // 5th
-    } else {
-        beat3 = chordOrScale(root, ctx, comp);
-    }
+    // Beat 3 — root of chord B (the chord change), or 5th if same chord
+    var beat3 = (ctxB.root !== ctxA.root)
+        ? rootB
+        : (Math.random() < 0.55 ? snapNear(rootA + 7, ctxA.midAnchor)
+                                : chordOrScale(rootA, ctxA, comp));
     notes.push({ pitch: beat3, start: 2.0, dur: 0.95 });
 
-    // Beat 4 — chromatic / diatonic approach to NEXT bar's root.
-    // In a single-chord loop, "next root" = same root,
-    // so we approach from a half-step above or below for tension.
-    var target = root;
+    // Beat 4 — approach to NEXT bar's root rootN
     var approach;
-    if (comp > 0.3 && Math.random() < 0.55 + comp * 0.3) {
-        // chromatic half-step approach (above/below)
-        approach = clampBass(target + (Math.random() < 0.5 ? -1 : 1));
+    if (comp > 0.3 && Math.random() < 0.6 + comp * 0.25) {
+        // Chromatic approach
+        approach = clampBass(rootN + (Math.random() < 0.5 ? -1 : 1));
     } else {
-        // diatonic step approach
-        var dir = (Math.random() < 0.5) ? -1 : 1;
-        approach = snapNear(root + (dir * 2), ctx.midAnchor);   // whole step
+        // Diatonic step (a 5th or whole-step away)
+        var diatonicPool = [rootN - 2, rootN + 2, rootN - 5, rootN + 5];
+        approach = clampBass(diatonicPool[Math.floor(Math.random() * diatonicPool.length)]);
     }
     notes.push({ pitch: approach, start: 3.0, dur: 0.95 });
 
-    // Fill / development — add an 8th note pickup before beat 1 of next bar
+    // Fill / development — 8th-note pickup on "and of 4" leading to rootN
     if (p.isFill || p.isDevelopment) {
-        // Eighth-note pickup on the "and of 4"
-        var pickupPool = ctx.chord;
-        var pickupInt  = pickupPool[1 + Math.floor(Math.random()*(pickupPool.length-1))];
-        notes.push({ pitch: snapNear(root + pickupInt, ctx.midAnchor),
-                     start: 3.5, dur: 0.45 });
-        notes[notes.length-2].dur = 0.45;                         // shorten beat 4
+        // Pickup = chromatic neighbor of next root (different from beat-4 approach)
+        var pickup = clampBass(rootN + (notes[notes.length-1].pitch < rootN ? 1 : -1));
+        notes.push({ pitch: pickup, start: 3.5, dur: 0.45 });
+        notes[notes.length-2].dur = 0.45;
     }
 
-    // Final climax: triplet-feel descending line on bar's last beat
+    // Final climax: triplet descent to next root
     if (p.isFinalClimax) {
         notes[notes.length-1].dur = 0.3;
-        notes.push({ pitch: snapNear(root + 5, ctx.midAnchor), start: 3.33, dur: 0.3 });
-        notes.push({ pitch: clampBass(root - 1),               start: 3.66, dur: 0.3 });
+        notes.push({ pitch: snapNear(rootA + 5, ctxA.midAnchor), start: 3.33, dur: 0.3 });
+        notes.push({ pitch: clampBass(rootN - 1),                start: 3.66, dur: 0.3 });
     }
 
     return notes;
@@ -417,12 +471,12 @@ function genFunk(p) {
                      start: 2.75, dur: 0.25 });
     }
 
-    // Turnaround / approach to next bar
+    // Turnaround / approach to next bar's actual root
     if (p.isLastOfPhrase) {
-        // Chromatic approach 16th hits on beat 4
-        notes.push({ pitch: clampBass(root - 2), start: 3.0,  dur: 0.25 });
-        notes.push({ pitch: clampBass(root - 1), start: 3.5,  dur: 0.25 });
-        notes.push({ pitch: clampBass(root - 1), start: 3.75, dur: 0.25 });
+        var nRootF = snapNear(p.nextCtx.midAnchor, ctx.midAnchor);
+        notes.push({ pitch: clampBass(nRootF - 2), start: 3.0,  dur: 0.25 });
+        notes.push({ pitch: clampBass(nRootF - 1), start: 3.5,  dur: 0.25 });
+        notes.push({ pitch: clampBass(nRootF - 1), start: 3.75, dur: 0.25 });
     } else {
         notes.push({ pitch: root, start: 3.0, dur: 0.5 });
         if (Math.random() < 0.4 + comp * 0.4) {
@@ -468,15 +522,16 @@ function genLoFi(p) {
         notes[1].dur = 1.45;
     }
 
-    // Turnaround / development
+    // Turnaround / development — approach NEXT bar's root
     if (p.isLastOfPhrase) {
-        notes[notes.length-1] = { pitch: clampBass(root - 1), start: 3.5, dur: 0.45 };
+        var nRoot = snapNear(p.nextCtx.lowAnchor, ctx.lowAnchor);
+        notes[notes.length-1] = { pitch: clampBass(nRoot - 1), start: 3.5, dur: 0.45 };
         notes[1].dur = 1.45;
     }
     if (p.isFinalClimax) {
-        // Final bar: add an extra pickup at beat 4 leading back to the loop start
+        var nRoot2 = snapNear(p.nextCtx.lowAnchor, ctx.lowAnchor);
         notes.push({ pitch: fifth, start: 3.0, dur: 0.45 });
-        notes.push({ pitch: clampBass(root - 1), start: 3.5, dur: 0.45 });
+        notes.push({ pitch: clampBass(nRoot2 - 1), start: 3.5, dur: 0.45 });
         notes[1].dur = 0.95;
     }
     return notes;
@@ -533,6 +588,7 @@ function analyzeSource() {
         }
 
         _pitchHist    = [0,0,0,0,0,0,0,0,0,0,0,0];
+        _rawNotes     = [];
         _analysisDone = false;
 
         // outlet 4: [track, slot] → reader (3-sec timeout safety net)
@@ -598,8 +654,15 @@ function _parseNotesJson(jsonStr) {
         var c = 0;
         for (var i = 0; i < arr.length; i++) {
             var p = parseInt(arr[i].pitch);
+            var st = parseFloat(arr[i].start_time);
+            var du = parseFloat(arr[i].duration);
             if (!isNaN(p) && p >= 0 && p < 128) {
                 _pitchHist[p % 12] += 1;
+                _rawNotes.push({
+                    pitch: p,
+                    start: isNaN(st) ? 0 : st,
+                    duration: (isNaN(du) || du <= 0) ? 0.25 : du
+                });
                 c++;
             }
         }
@@ -615,10 +678,17 @@ function _parseNotesFlat(arr) {
     // Format: ["notes", count, "note", p, t, d, v, m, "note", p, ..., "done"]
     var count = 0;
     for (var i = 0; i < arr.length; i++) {
-        if (arr[i] === "note" && i + 1 < arr.length) {
-            var p = parseInt(arr[i + 1]);
+        if (arr[i] === "note" && i + 5 < arr.length) {
+            var p  = parseInt(arr[i + 1]);
+            var st = parseFloat(arr[i + 2]);
+            var du = parseFloat(arr[i + 3]);
             if (!isNaN(p) && p >= 0 && p < 128) {
                 _pitchHist[p % 12] += 1;
+                _rawNotes.push({
+                    pitch: p,
+                    start: isNaN(st) ? 0 : st,
+                    duration: (isNaN(du) || du <= 0) ? 0.25 : du
+                });
                 count++;
             }
             i += 5;
@@ -657,9 +727,143 @@ function _finishMidiAnalysis() {
     g_mode = bestMode;
     outlet(1, bestRoot);
     outlet(2, bestMode);
-    outlet(0, "set", "MIDI解析完了: " + NOTE_NAMES[bestRoot] +
-                     " " + (bestMode === 0 ? "Major" : "Minor") +
-                     " → 生成ボタンを押してください");
+
+    // ── Clip length ─────────────────────────────────────────────
+    var clipLenBeats = 0;
+    try {
+        if (_clipApi) clipLenBeats = parseFloat(_clipApi.get("length")[0]);
+    } catch (e) { clipLenBeats = 0; }
+    if (isNaN(clipLenBeats) || clipLenBeats <= 0) {
+        // Fallback: derive from last note end
+        var lastEnd = 0;
+        for (i = 0; i < _rawNotes.length; i++) {
+            var e = _rawNotes[i].start + _rawNotes[i].duration;
+            if (e > lastEnd) lastEnd = e;
+        }
+        clipLenBeats = Math.max(4, Math.ceil(lastEnd / 4) * 4);
+    }
+    g_clipBars = Math.max(1, Math.round(clipLenBeats / 4));
+
+    // ── Chord progression detection (both granularities) ───────
+    g_progBar     = _detectProgression(_rawNotes, clipLenBeats, 4);
+    g_progHalfBar = _detectProgression(_rawNotes, clipLenBeats, 2);
+    g_loopBars    = _detectLoopBars(g_progBar);
+    g_useProgression = g_progBar.length > 0;
+
+    // ── Density ─────────────────────────────────────────────────
+    var notesPerBar = _rawNotes.length / Math.max(1, g_clipBars);
+    g_density = notesPerBar;
+    // 1.5 n/bar → 0, 8 n/bar → 100
+    g_suggestedComplexity = Math.max(0, Math.min(100,
+        Math.round((notesPerBar - 1.5) / 6.5 * 100)));
+
+    var progSummary = _summarizeProgression(g_progBar);
+    outlet(0, "set",
+        "解析完了: Key=" + NOTE_NAMES[bestRoot] + " " +
+        (bestMode === 0 ? "Maj" : "Min") +
+        " | Loop=" + g_loopBars + "bars" +
+        " | " + notesPerBar.toFixed(1) + "n/bar(推奨Comp=" + g_suggestedComplexity + ")" +
+        " | " + progSummary);
+
+    post("KemuriBeat: progression(1bar)= " + _progDebug(g_progBar) + "\n");
+    post("KemuriBeat: progression(half)= " + _progDebug(g_progHalfBar) + "\n");
+}
+
+// ── Per-segment chord detection ────────────────────────────────
+// Score = Σ (duration-weighted pitch-class strength × chord template).
+// Returns [{startBeat, durationBeats, root, quality}, ...]
+function _detectProgression(notes, clipLenBeats, segBeats) {
+    if (!notes || !notes.length) return [];
+    var numSeg = Math.max(1, Math.round(clipLenBeats / segBeats));
+    var result = [];
+
+    for (var s = 0; s < numSeg; s++) {
+        var sStart = s * segBeats;
+        var sEnd   = sStart + segBeats;
+        var pch    = [0,0,0,0,0,0,0,0,0,0,0,0];
+        var anyHit = false;
+
+        for (var i = 0; i < notes.length; i++) {
+            var n     = notes[i];
+            var nStart = Math.max(n.start, sStart);
+            var nEnd   = Math.min(n.start + n.duration, sEnd);
+            if (nEnd > nStart) {
+                pch[n.pitch % 12] += (nEnd - nStart);
+                anyHit = true;
+            }
+        }
+
+        if (!anyHit) {
+            // Empty segment — inherit previous chord (sustained)
+            if (result.length > 0) {
+                var prev = result[result.length - 1];
+                result.push({ startBeat: sStart, durationBeats: segBeats,
+                              root: prev.root, quality: prev.quality });
+            } else {
+                result.push({ startBeat: sStart, durationBeats: segBeats,
+                              root: g_root, quality: (g_mode === 0 ? "maj" : "min") });
+            }
+            continue;
+        }
+
+        var bestScore = -Infinity, bestRoot = 0, bestQ = "maj";
+        for (var r = 0; r < 12; r++) {
+            for (var qi = 0; qi < 2; qi++) {
+                var tmpl = (qi === 0) ? CHORD_TMPL_MAJ : CHORD_TMPL_MIN;
+                var sc = 0;
+                for (var j = 0; j < 12; j++) {
+                    sc += pch[j] * tmpl[(j - r + 12) % 12];
+                }
+                if (sc > bestScore) {
+                    bestScore = sc; bestRoot = r;
+                    bestQ = (qi === 0) ? "maj" : "min";
+                }
+            }
+        }
+        result.push({ startBeat: sStart, durationBeats: segBeats,
+                      root: bestRoot, quality: bestQ });
+    }
+    return result;
+}
+
+// Detect smallest period among {4, 8, 16} where progression repeats.
+function _detectLoopBars(prog) {
+    if (!prog || !prog.length) return 0;
+    var candidates = [4, 8, 16];
+    for (var ci = 0; ci < candidates.length; ci++) {
+        var p = candidates[ci];
+        if (p > prog.length) continue;
+        var match = true;
+        for (var i = p; i < prog.length; i++) {
+            if (prog[i].root !== prog[i - p].root ||
+                prog[i].quality !== prog[i - p].quality) {
+                match = false; break;
+            }
+        }
+        if (match) return p;
+    }
+    return prog.length;   // not periodic within candidates
+}
+
+function _summarizeProgression(prog) {
+    if (!prog || !prog.length) return "Prog: (none)";
+    var s = "Prog:";
+    var len = Math.min(prog.length, 8);
+    for (var i = 0; i < len; i++) {
+        if (i > 0) s += "-";
+        s += NOTE_NAMES[prog[i].root] + (prog[i].quality === "min" ? "m" : "");
+    }
+    if (prog.length > 8) s += "...";
+    return s;
+}
+
+function _progDebug(prog) {
+    var s = "";
+    for (var i = 0; i < prog.length; i++) {
+        if (i > 0) s += " ";
+        s += NOTE_NAMES[prog[i].root] + (prog[i].quality === "min" ? "m" : "");
+    }
+    return s;
 }
 
 function _ksCorr(vec, profile, root) {
