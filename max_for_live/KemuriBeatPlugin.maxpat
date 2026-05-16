@@ -298,11 +298,11 @@
 					"presentation_rect" : [ 220.0, 51.0, 65.0, 15.0 ],
 					"saved_attribute_attributes" : 					{
 						"valueof" : 						{
-							"parameter_enum" : [ "1", "2", "4", "8", "16" ],
-							"parameter_initial" : [ 2 ],
+							"parameter_enum" : [ "4", "8", "16" ],
+							"parameter_initial" : [ 0 ],
 							"parameter_initial_enable" : 1,
 							"parameter_longname" : "Bars",
-							"parameter_mmax" : 4,
+							"parameter_mmax" : 2,
 							"parameter_modmode" : 0,
 							"parameter_shortname" : "Bars",
 							"parameter_type" : 2

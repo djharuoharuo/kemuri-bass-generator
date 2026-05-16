@@ -74,9 +74,9 @@ function msg_int(v) {
         case 2:  g_complexity   = v; break;
         case 3:  g_fill         = v; break;
         case 4:
-            // menu index 0-4 → 1,2,4,8,16 bars (direct connection from menu-bars)
-            var barMap = [1, 2, 4, 8, 16];
-            g_bars = barMap[Math.max(0, Math.min(4, v))];
+            // menu index 0-2 → 4,8,16 bars (direct connection from menu-bars)
+            var barMap = [4, 8, 16];
+            g_bars = barMap[Math.max(0, Math.min(2, v))];
             post("KemuriBeat: bars=" + g_bars + "\n");
             break;
         case 5:  g_root         = v; break;
@@ -129,103 +129,357 @@ function generate() {
 }
 
 // ── Build note list ───────────────────────────────────────────
-// Fill stages (g_fill 0-100):
-//   0      = never fill
-//   1-25   = last 1 bar of every 4-bar phrase gets fill
-//   26-50  = last 2 bars
-//   51-75  = last 3 bars
-//   76-100 = all bars (constant fill)
+// Phrase structure:
+//   - Always grouped in 4-bar phrases.
+//   - bar 0-2: groove (style-specific pattern on root)
+//   - bar 3: turnaround (chromatic / scale approach to next phrase root)
+//   - 8 bars: bar 7 = stronger development (climactic turnaround / fill)
+//   - 16 bars: bar 15 = main climax; bar 7 = mid-development
 //
-// Complexity (g_complexity 0-100): continuous probability control
-//   0   = sparse, chord tones only, quiet scale pool (3 notes)
-//   100 = dense extras, chromatic approaches, full scale (7 notes)
-//
+// Fill (0-100): density of fill activity in last bar of each 4-bar phrase
+// Complexity (0-100): probability of extras, octave jumps, passing tones, chromatic approaches
 // Velocity: always 127
+//
+// Music theory references baked into per-style generators:
+//   Boom-Bap: sub-bass on root with octave drops, syncopated rests,
+//             minor pentatonic flourishes (J Dilla / Premier / Pete Rock).
+//   Soul-Jazz: walking bass — quarter notes, beat-1 root, beat-4
+//              chromatic/scale approach to next bar's root.
+//   Funk: 16th-note groove (Jamerson), root + octave hits, ghost notes,
+//         scale-tone passing on weak 16ths.
+//   Lo-Fi: half-note / dotted feel; root and 5th, very sparse.
 function buildNotes(bpm) {
-    var st     = STYLES[g_style];
-    var scale  = (g_mode == 0) ? SCALE_MAJOR : SCALE_MINOR;
-    var ctones = (g_mode == 0) ? CHORD_MAJOR : CHORD_MINOR;
-    var notes  = [];
+    var ctx = makeKeyContext();
+    var notes = [];
 
-    // How many bars per 4-bar phrase receive fill pattern (0-4)
-    var fillBars = Math.round(g_fill / 100.0 * 4);
+    // Map fill 0-100 → number of fill bars per 4-bar phrase (0..4)
+    //   0       = 0 fill bars
+    //   1-25    = 1
+    //   26-50   = 2
+    //   51-75   = 3
+    //   76-100  = 4 (all bars get extra activity)
+    var fillBars = (g_fill <= 0) ? 0 : Math.min(4, Math.ceil(g_fill / 25.0));
 
     for (var bar = 0; bar < g_bars; bar++) {
-        var barOff    = bar * 4.0;
-        var barInPhr  = bar % 4;                               // 0,1,2,3
-        var isFill    = fillBars > 0 && barInPhr >= (4 - fillBars);
-        var pat       = buildPattern(st, isFill);
+        var barInPhr        = bar % 4;
+        var isLastOfPhrase  = (barInPhr === 3);
+        var isLastBarTotal  = (bar === g_bars - 1);
+        // Development: stronger turnaround in last bar of long sections
+        var isDevelopment   = (g_bars >= 8) && isLastBarTotal;
+        var midDevelopment  = (g_bars >= 16) && (bar === 7);
+        var isFill          = fillBars > 0 && barInPhr >= (4 - fillBars);
 
-        for (var i = 0; i < pat.length; i++) {
-            var step  = pat[i];
-            var pitch = choosePitch(step.o, scale, ctones);
-            notes.push({ pitch: pitch, start: barOff + step.o, dur: step.d, vel: 127 });
+        var barNotes = generateBar(g_style, {
+            ctx: ctx,
+            barIndex: bar,
+            barInPhrase: barInPhr,
+            isLastOfPhrase: isLastOfPhrase,
+            isDevelopment: isDevelopment || midDevelopment,
+            isFinalClimax: isDevelopment,
+            isFill: isFill,
+            compFactor: g_complexity / 100.0
+        });
+
+        var barOff = bar * 4.0;
+        for (var i = 0; i < barNotes.length; i++) {
+            barNotes[i].start += barOff;
+            barNotes[i].vel = 127;
+            notes.push(barNotes[i]);
         }
     }
     return notes;
 }
 
-function buildPattern(st, isFill) {
-    var pat        = [];
-    var compFactor = g_complexity / 100.0;
-    var i;
-
-    if (isFill) {
-        for (i = 0; i < st.base.length; i++) {
-            if (st.base[i].o < 2.5) pat.push(st.base[i]);
-        }
-        for (i = 0; i < st.fill.length; i++) pat.push(st.fill[i]);
-    } else {
-        for (i = 0; i < st.base.length; i++) {
-            // Downbeat always kept; off-beats drop 15% of the time for variety
-            if (st.base[i].o === 0 || Math.random() > 0.15) {
-                pat.push(st.base[i]);
-            }
-        }
-        // Extras: probability scales linearly 0%→100% with complexity
-        for (i = 0; i < st.extras.length; i++) {
-            if (Math.random() < compFactor) pat.push(st.extras[i]);
-        }
-        pat.sort(function(a, b) { return a.o - b.o; });
-    }
-    return pat;
+// ── Key/scale context ──────────────────────────────────────────
+function makeKeyContext() {
+    var isMinor = (g_mode != 0);
+    // For Boom-Bap / Lo-Fi we want a sub-bass anchor (E1-area).
+    // For Jazz / Funk we want a mid-bass anchor (one octave up).
+    var lowAnchor = 24 + g_root;   // C1+root  (24..35) → sub bass
+    var midAnchor = 36 + g_root;   // C2+root  (36..47) → mid bass
+    // Diatonic scale intervals
+    var scale = isMinor ? SCALE_MINOR : SCALE_MAJOR;
+    // Chord tones (1, 3, 5)
+    var chord = isMinor ? CHORD_MINOR : CHORD_MAJOR;
+    // Pentatonic for boom-bap flourishes
+    var penta = isMinor ? [0,3,5,7,10] : [0,2,4,7,9];
+    return {
+        root: g_root,
+        isMinor: isMinor,
+        scale: scale,        // diatonic
+        chord: chord,        // 1-3-5
+        penta: penta,        // pentatonic
+        lowAnchor: lowAnchor,
+        midAnchor: midAnchor
+    };
 }
 
-function choosePitch(offset, scale, ctones) {
-    var rootMidi   = clampBass(g_root + 36);
-    var compFactor = g_complexity / 100.0;
-
-    // Scale note pool grows with complexity: 3 notes at 0, full scale at 100
-    var poolSize = Math.max(3, Math.round(3 + compFactor * (scale.length - 3)));
-
-    // ── Beat 1 (downbeat): musical anchor ──────────────────────
-    // Mostly root, but some variety so each press sounds different
-    if (offset === 0.0) {
-        var r = Math.random();
-        if (r < 0.65) return clampBass(rootMidi);                        // 65% root
-        if (r < 0.85) return clampBass(rootMidi + 7);                    // 20% 5th
-        return clampBass(rootMidi + ctones[Math.min(1, ctones.length - 1)]); // 15% 3rd
-    }
-
-    // ── Chromatic approach (0%→30% with comp) ──────────────────
-    if (Math.random() < compFactor * 0.3) {
-        var chrom = clampBass(rootMidi + ctones[Math.floor(Math.random() * ctones.length)]);
-        return clampBass(chrom + (Math.random() < 0.5 ? -1 : 1));
-    }
-
-    // ── Chord tone (30% at comp=0, 80% at comp=100) ────────────
-    if (Math.random() < 0.3 + compFactor * 0.5) {
-        return clampBass(rootMidi + ctones[Math.floor(Math.random() * ctones.length)]);
-    }
-
-    // ── Scale tone from growing pool ───────────────────────────
-    return clampBass(rootMidi + scale[Math.floor(Math.random() * poolSize)]);
-}
-
+// Snap a pitch into the bass range without changing pitch class
 function clampBass(midi) {
     while (midi < BASS_MIN) midi += 12;
     while (midi > BASS_MAX) midi -= 12;
     return midi;
+}
+
+// Snap a pitch toward an anchor octave (preferred octave)
+function snapNear(midi, anchor) {
+    while (midi - anchor > 6)  midi -= 12;
+    while (anchor - midi > 6)  midi += 12;
+    return clampBass(midi);
+}
+
+// ── Per-style bar generators ───────────────────────────────────
+function generateBar(style, p) {
+    switch (style) {
+        case 0: return genBoomBap(p);
+        case 1: return genSoulJazz(p);
+        case 2: return genFunk(p);
+        case 3: return genLoFi(p);
+        default: return genBoomBap(p);
+    }
+}
+
+// ── Style 0: Boom-Bap ──────────────────────────────────────────
+// Root-heavy sub-bass, syncopated, lots of space, occasional octave drops.
+// Turnaround uses chromatic approach (b2 below next root) or 5th.
+function genBoomBap(p) {
+    var ctx   = p.ctx;
+    var notes = [];
+    var root  = snapNear(ctx.lowAnchor, ctx.lowAnchor);   // sub-bass root
+    var oct   = clampBass(root + 12);
+    var fifth = clampBass(root + 7);
+    var comp  = p.compFactor;
+
+    // Beat 1: root (the foundation)
+    notes.push({ pitch: root, start: 0.0, dur: 0.5 });
+
+    // "And of 2" — J Dilla style anticipation hit
+    if (Math.random() < 0.45 + comp * 0.35) {
+        notes.push({ pitch: root, start: 1.5, dur: 0.5 });
+    }
+
+    // Beat 3: either root again, or octave-up call-and-response
+    if (Math.random() < 0.5 + comp * 0.3) {
+        // octave call
+        notes.push({ pitch: oct, start: 2.0, dur: 0.5 });
+        if (Math.random() < 0.6) {
+            notes.push({ pitch: root, start: 2.5, dur: 0.5 });   // response
+        }
+    } else {
+        notes.push({ pitch: root, start: 2.0, dur: 0.75 });
+    }
+
+    // Ghost / extras on weak 16ths driven by complexity
+    if (comp > 0.4 && Math.random() < comp * 0.5) {
+        var ghostPos = (Math.random() < 0.5) ? 0.75 : 2.75;
+        notes.push({ pitch: root, start: ghostPos, dur: 0.25 });
+    }
+
+    // Turnaround on last bar of 4-bar phrase
+    if (p.isLastOfPhrase) {
+        // Chromatic approach (b2 below) at beat 4.5 → leads to next bar's root
+        var approach = clampBass(root - 1);                       // half-step below
+        notes.push({ pitch: approach, start: 3.5, dur: 0.5 });
+    }
+
+    // Development (8/16-bar last bar): bigger climactic move
+    if (p.isFinalClimax) {
+        // Pentatonic walk-up to top octave then resolve
+        var pent = ctx.penta;
+        notes.push({ pitch: clampBass(root + pent[1]), start: 3.0,  dur: 0.25 });
+        notes.push({ pitch: clampBass(root + pent[2]), start: 3.25, dur: 0.25 });
+        notes.push({ pitch: clampBass(root + pent[3]), start: 3.5,  dur: 0.25 });
+        notes.push({ pitch: clampBass(root + pent[4]), start: 3.75, dur: 0.25 });
+    } else if (p.isFill) {
+        // Lighter fill — one extra pentatonic note before turnaround
+        var pIdx = 1 + Math.floor(Math.random() * 3);
+        notes.push({ pitch: clampBass(root + ctx.penta[pIdx]),
+                     start: 3.0, dur: 0.25 });
+    }
+
+    return notes;
+}
+
+// ── Style 1: Soul-Jazz (walking bass) ─────────────────────────
+// Quarter-note walking line: 1=root, 2=chord/scale tone,
+// 3=chord tone or approach, 4=chromatic approach to next root.
+function genSoulJazz(p) {
+    var ctx   = p.ctx;
+    var notes = [];
+    var root  = snapNear(ctx.midAnchor, ctx.midAnchor);
+    var comp  = p.compFactor;
+
+    // Beat 1 — always root (rarely 5th below for variety)
+    var beat1 = (Math.random() < 0.85) ? root : snapNear(root - 5, ctx.midAnchor);
+    notes.push({ pitch: beat1, start: 0.0, dur: 0.95 });
+
+    // Beat 2 — chord tone (3rd, 5th) or scale tone
+    var beat2 = chordOrScale(root, ctx, comp);
+    notes.push({ pitch: beat2, start: 1.0, dur: 0.95 });
+
+    // Beat 3 — chord tone, often the 5th
+    var beat3;
+    if (Math.random() < 0.55) {
+        beat3 = snapNear(root + 7, ctx.midAnchor);              // 5th
+    } else {
+        beat3 = chordOrScale(root, ctx, comp);
+    }
+    notes.push({ pitch: beat3, start: 2.0, dur: 0.95 });
+
+    // Beat 4 — chromatic / diatonic approach to NEXT bar's root.
+    // In a single-chord loop, "next root" = same root,
+    // so we approach from a half-step above or below for tension.
+    var target = root;
+    var approach;
+    if (comp > 0.3 && Math.random() < 0.55 + comp * 0.3) {
+        // chromatic half-step approach (above/below)
+        approach = clampBass(target + (Math.random() < 0.5 ? -1 : 1));
+    } else {
+        // diatonic step approach
+        var dir = (Math.random() < 0.5) ? -1 : 1;
+        approach = snapNear(root + (dir * 2), ctx.midAnchor);   // whole step
+    }
+    notes.push({ pitch: approach, start: 3.0, dur: 0.95 });
+
+    // Fill / development — add an 8th note pickup before beat 1 of next bar
+    if (p.isFill || p.isDevelopment) {
+        // Eighth-note pickup on the "and of 4"
+        var pickupPool = ctx.chord;
+        var pickupInt  = pickupPool[1 + Math.floor(Math.random()*(pickupPool.length-1))];
+        notes.push({ pitch: snapNear(root + pickupInt, ctx.midAnchor),
+                     start: 3.5, dur: 0.45 });
+        notes[notes.length-2].dur = 0.45;                         // shorten beat 4
+    }
+
+    // Final climax: triplet-feel descending line on bar's last beat
+    if (p.isFinalClimax) {
+        notes[notes.length-1].dur = 0.3;
+        notes.push({ pitch: snapNear(root + 5, ctx.midAnchor), start: 3.33, dur: 0.3 });
+        notes.push({ pitch: clampBass(root - 1),               start: 3.66, dur: 0.3 });
+    }
+
+    return notes;
+}
+
+function chordOrScale(root, ctx, comp) {
+    // 60% chord tone, 40% scale tone (more chord at low comp, more scale at high)
+    var chordProb = 0.7 - comp * 0.3;
+    if (Math.random() < chordProb) {
+        var c = ctx.chord[1 + Math.floor(Math.random() * (ctx.chord.length - 1))];
+        return snapNear(root + c, ctx.midAnchor);
+    } else {
+        // Scale tones excluding root itself
+        var sIdx = 1 + Math.floor(Math.random() * (ctx.scale.length - 1));
+        return snapNear(root + ctx.scale[sIdx], ctx.midAnchor);
+    }
+}
+
+// ── Style 2: Funk (16th-note groove, Jamerson-style) ──────────
+function genFunk(p) {
+    var ctx   = p.ctx;
+    var notes = [];
+    var root  = snapNear(ctx.midAnchor, ctx.midAnchor);
+    var oct   = clampBass(root + 12);
+    var comp  = p.compFactor;
+
+    // Strong root on beat 1
+    notes.push({ pitch: root, start: 0.0, dur: 0.25 });
+
+    // 16th syncopation on "e of 1" and/or "a of 1"
+    if (Math.random() < 0.35 + comp * 0.4) {
+        notes.push({ pitch: root, start: 0.25, dur: 0.25 });
+    }
+    if (Math.random() < 0.45 + comp * 0.3) {
+        notes.push({ pitch: root, start: 0.75, dur: 0.25 });
+    }
+
+    // Beat 2: ghost / scale-tone passing
+    if (Math.random() < 0.6) {
+        notes.push({ pitch: chordOrScale(root, ctx, comp),
+                     start: 1.0, dur: 0.25 });
+    }
+    if (Math.random() < 0.35 + comp * 0.3) {
+        notes.push({ pitch: root, start: 1.5, dur: 0.25 });
+    }
+
+    // Beat 3: octave jump (classic funk move)
+    if (Math.random() < 0.5 + comp * 0.3) {
+        notes.push({ pitch: oct, start: 2.0, dur: 0.25 });
+        notes.push({ pitch: root, start: 2.25, dur: 0.25 });
+    } else {
+        notes.push({ pitch: root, start: 2.0, dur: 0.5 });
+    }
+
+    // Beat 3.5 / 4: walking up to approach next bar
+    if (Math.random() < 0.4 + comp * 0.4) {
+        var step = ctx.scale[2 + Math.floor(Math.random() * 2)]; // 3rd/4th
+        notes.push({ pitch: snapNear(root + step, ctx.midAnchor),
+                     start: 2.75, dur: 0.25 });
+    }
+
+    // Turnaround / approach to next bar
+    if (p.isLastOfPhrase) {
+        // Chromatic approach 16th hits on beat 4
+        notes.push({ pitch: clampBass(root - 2), start: 3.0,  dur: 0.25 });
+        notes.push({ pitch: clampBass(root - 1), start: 3.5,  dur: 0.25 });
+        notes.push({ pitch: clampBass(root - 1), start: 3.75, dur: 0.25 });
+    } else {
+        notes.push({ pitch: root, start: 3.0, dur: 0.5 });
+        if (Math.random() < 0.4 + comp * 0.4) {
+            notes.push({ pitch: chordOrScale(root, ctx, comp),
+                         start: 3.5, dur: 0.5 });
+        }
+    }
+
+    // Fill / climax: dense 16ths on beat 4
+    if (p.isFill || p.isFinalClimax) {
+        var pent = ctx.penta;
+        for (var s = 3.0; s < 4.0; s += 0.25) {
+            var pIdx = Math.floor(Math.random() * pent.length);
+            notes.push({ pitch: snapNear(root + pent[pIdx], ctx.midAnchor),
+                         start: s, dur: 0.25 });
+        }
+    }
+
+    return notes;
+}
+
+// ── Style 3: Lo-Fi ─────────────────────────────────────────────
+// Sparse, root and 5th, long durations. Half-note feel.
+function genLoFi(p) {
+    var ctx   = p.ctx;
+    var notes = [];
+    var root  = snapNear(ctx.lowAnchor, ctx.lowAnchor);
+    var fifth = clampBass(root + 7);
+    var comp  = p.compFactor;
+
+    // Bar 1 root, long
+    notes.push({ pitch: root, start: 0.0, dur: 1.75 });
+
+    // Beat 3: usually root again, sometimes 5th for color (comp-dependent)
+    var beat3 = (Math.random() < 0.3 + comp * 0.4) ? fifth : root;
+    notes.push({ pitch: beat3, start: 2.0, dur: 1.75 });
+
+    // Soft pickup on "and of 4" with complexity
+    if (comp > 0.35 && Math.random() < comp * 0.7) {
+        var pent = ctx.penta;
+        notes.push({ pitch: snapNear(root + pent[1+Math.floor(Math.random()*3)], ctx.lowAnchor),
+                     start: 3.5, dur: 0.45 });
+        notes[1].dur = 1.45;
+    }
+
+    // Turnaround / development
+    if (p.isLastOfPhrase) {
+        notes[notes.length-1] = { pitch: clampBass(root - 1), start: 3.5, dur: 0.45 };
+        notes[1].dur = 1.45;
+    }
+    if (p.isFinalClimax) {
+        // Final bar: add an extra pickup at beat 4 leading back to the loop start
+        notes.push({ pitch: fifth, start: 3.0, dur: 0.45 });
+        notes.push({ pitch: clampBass(root - 1), start: 3.5, dur: 0.45 });
+        notes[1].dur = 0.95;
+    }
+    return notes;
 }
 
 // ── Write to clip via Live API ────────────────────────────────
