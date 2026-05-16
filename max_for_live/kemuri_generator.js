@@ -73,7 +73,12 @@ function msg_int(v) {
         case 1:  g_style        = v; break;
         case 2:  g_complexity   = v; break;
         case 3:  g_fill         = v; break;
-        case 4:  g_bars         = v; break;
+        case 4:
+            // patcher sends expr output: 4, 8, or 16 (from menu index 0,1,2)
+            // handle both raw index and converted value defensively
+            g_bars = (v <= 2) ? (v === 0 ? 4 : v === 1 ? 8 : 16) : v;
+            post("KemuriBeat: bars=" + g_bars + "\n");
+            break;
         case 5:  g_root         = v; break;
         case 6:  g_mode         = v; break;
         case 7:  g_slot         = v; break;
@@ -124,63 +129,97 @@ function generate() {
 }
 
 // ── Build note list ───────────────────────────────────────────
+// Fill stages (g_fill 0-100):
+//   0      = never fill
+//   1-25   = last 1 bar of every 4-bar phrase gets fill
+//   26-50  = last 2 bars
+//   51-75  = last 3 bars
+//   76-100 = all bars (constant fill)
+//
+// Complexity (g_complexity 0-100): continuous probability control
+//   0   = sparse, chord tones only, quiet scale pool (3 notes)
+//   100 = dense extras, chromatic approaches, full scale (7 notes)
+//
+// Velocity: always 127
 function buildNotes(bpm) {
     var st     = STYLES[g_style];
     var scale  = (g_mode == 0) ? SCALE_MAJOR : SCALE_MINOR;
     var ctones = (g_mode == 0) ? CHORD_MAJOR : CHORD_MINOR;
     var notes  = [];
 
+    // How many bars per 4-bar phrase receive fill pattern (0-4)
+    var fillBars = Math.round(g_fill / 100.0 * 4);
+
     for (var bar = 0; bar < g_bars; bar++) {
-        var barOff = bar * 4.0;
-        var isFill = (g_fill > 50) && ((bar + 1) % 4 == 0);
-        var pat    = buildPattern(st, isFill);
+        var barOff    = bar * 4.0;
+        var barInPhr  = bar % 4;                               // 0,1,2,3
+        var isFill    = fillBars > 0 && barInPhr >= (4 - fillBars);
+        var pat       = buildPattern(st, isFill);
 
         for (var i = 0; i < pat.length; i++) {
             var step  = pat[i];
             var pitch = choosePitch(step.o, scale, ctones);
-            var vel   = Math.max(40, Math.min(127,
-                Math.round((72 + g_complexity * 0.12) * step.v + (Math.random()*8 - 4))
-            ));
-            notes.push({ pitch: pitch, start: barOff + step.o, dur: step.d, vel: vel });
+            notes.push({ pitch: pitch, start: barOff + step.o, dur: step.d, vel: 127 });
         }
     }
     return notes;
 }
 
 function buildPattern(st, isFill) {
-    var pat = [];
+    var pat        = [];
+    var compFactor = g_complexity / 100.0;
     var i;
+
     if (isFill) {
         for (i = 0; i < st.base.length; i++) {
             if (st.base[i].o < 2.5) pat.push(st.base[i]);
         }
         for (i = 0; i < st.fill.length; i++) pat.push(st.fill[i]);
     } else {
-        for (i = 0; i < st.base.length; i++) pat.push(st.base[i]);
-        if (g_complexity > 50) {
-            var prob = (g_complexity - 50) / 50.0;
-            for (i = 0; i < st.extras.length; i++) {
-                if (Math.random() < prob) pat.push(st.extras[i]);
+        for (i = 0; i < st.base.length; i++) {
+            // Downbeat always kept; off-beats drop 15% of the time for variety
+            if (st.base[i].o === 0 || Math.random() > 0.15) {
+                pat.push(st.base[i]);
             }
-            pat.sort(function(a,b){ return a.o - b.o; });
         }
+        // Extras: probability scales linearly 0%→100% with complexity
+        for (i = 0; i < st.extras.length; i++) {
+            if (Math.random() < compFactor) pat.push(st.extras[i]);
+        }
+        pat.sort(function(a, b) { return a.o - b.o; });
     }
     return pat;
 }
 
 function choosePitch(offset, scale, ctones) {
-    var rootMidi = clampBass(g_root + 36);
-    if (offset == 0.0) return clampBass(rootMidi);
-    if (offset == 2.0) return (Math.random() < 0.5) ? clampBass(rootMidi + 7) : clampBass(rootMidi);
-    if (Math.random() < (g_complexity / 100.0) * 0.25) {
-        var target = clampBass(rootMidi + ctones[Math.floor(Math.random() * ctones.length)]);
-        return clampBass(target + (Math.random() < 0.5 ? -1 : 1));
+    var rootMidi   = clampBass(g_root + 36);
+    var compFactor = g_complexity / 100.0;
+
+    // Scale note pool grows with complexity: 3 notes at 0, full scale at 100
+    var poolSize = Math.max(3, Math.round(3 + compFactor * (scale.length - 3)));
+
+    // ── Beat 1 (downbeat): musical anchor ──────────────────────
+    // Mostly root, but some variety so each press sounds different
+    if (offset === 0.0) {
+        var r = Math.random();
+        if (r < 0.65) return clampBass(rootMidi);                        // 65% root
+        if (r < 0.85) return clampBass(rootMidi + 7);                    // 20% 5th
+        return clampBass(rootMidi + ctones[Math.min(1, ctones.length - 1)]); // 15% 3rd
     }
-    if (Math.random() < 0.3 + (g_complexity / 100.0) * 0.4) {
+
+    // ── Chromatic approach (0%→30% with comp) ──────────────────
+    if (Math.random() < compFactor * 0.3) {
+        var chrom = clampBass(rootMidi + ctones[Math.floor(Math.random() * ctones.length)]);
+        return clampBass(chrom + (Math.random() < 0.5 ? -1 : 1));
+    }
+
+    // ── Chord tone (30% at comp=0, 80% at comp=100) ────────────
+    if (Math.random() < 0.3 + compFactor * 0.5) {
         return clampBass(rootMidi + ctones[Math.floor(Math.random() * ctones.length)]);
     }
-    var half = Math.ceil(scale.length / 2);
-    return clampBass(rootMidi + scale[Math.floor(Math.random() * half)]);
+
+    // ── Scale tone from growing pool ───────────────────────────
+    return clampBass(rootMidi + scale[Math.floor(Math.random() * poolSize)]);
 }
 
 function clampBass(midi) {
