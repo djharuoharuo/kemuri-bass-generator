@@ -119,20 +119,39 @@ Ableton 側では **プラグインをトラックから一度削除→再ドラ
 `.maxpat` の拡張子を `.amxd` に変えるだけでは **Ableton に認識されない**。
 `.amxd` はバイナリヘッダ付きの特殊フォーマットのため、変換スクリプトが必要。
 
+### デバイス種別と保存先・`DEVICE_TYPE` の対応
+
+| デバイス種別 | `DEVICE_TYPE` | User Library の保存先 | Ableton での配置場所 |
+|------------|--------------|----------------------|-------------------|
+| MIDI Effect | `b"mmmm"` | `User Library/Presets/MIDI Effects/Max MIDI Effect/` | MIDI トラックのインストゥルメント左 |
+| Audio Effect | `b"aaaa"` | `User Library/Presets/Audio Effects/Max Audio Effect/` | オーディオトラック・マスタートラック含む全トラック |
+| Instrument | `b"iiii"` | `User Library/Presets/Instruments/Max Instrument/` | MIDI トラックのインストゥルメントスロット |
+
+**Audio Effect の場合**: `plugin~` / `plugout~` を使っていれば Max Audio Effect として動く。
+Ableton ブラウザの「Max Audio Effect」テンプレートから保存した `.amxd` なら
+マスタートラックを含むどのオーディオトラックにも配置できる。
+
+⚠️ 種別を間違えて保存した場合（例: MIDI Effect フォルダに Audio Effect を置いた）は
+Max エディタで開き直して正しいフォルダに Save As し直す。
+
 ### 手順
 
 1. `build_amxd.py` を新プロジェクトにコピー
-2. 以下の2行を新しいファイル名に変更：
+2. 以下を新しいファイルに合わせて変更：
 
 ```python
-MAXPAT   = os.path.join(HERE, "新しいパッチ名.maxpat")
-AMXD_OUT = os.path.join(HERE, "新しいパッチ名.amxd")
+MAXPAT      = os.path.join(HERE, "新しいパッチ名.maxpat")
+AMXD_OUT    = os.path.join(HERE, "新しいパッチ名.amxd")
+DEVICE_TYPE = b"aaaa"  # Audio Effect / b"mmmm" MIDI Effect / b"iiii" Instrument
+
+USER_LIBRARIES = [
+    r"D:\program files\ableton live song\User Library\Presets\Audio Effects\Max Audio Effect",
+]
 ```
 
-3. `USER_LIBRARIES` のパスを確認（Ableton の User Library がどこにあるか）
-4. `python build_amxd.py` を実行 → `.amxd` 生成 + User Library に自動コピー
+3. `python build_amxd.py` を実行 → `.amxd` 生成 + User Library に自動コピー
 
-Max エディタを一切開かなくても Ableton のブラウザ（Max for Live カテゴリ）に出てくる。
+Max エディタを一切開かなくても Ableton のブラウザに出てくる。
 
 ### Python 側を更新したとき
 
