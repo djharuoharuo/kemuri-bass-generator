@@ -24,8 +24,11 @@ MAXPAT   = os.path.join(HERE, "KemuriBeatPlugin.maxpat")
 AMXD_OUT = os.path.join(HERE, "KemuriBeatPlugin.amxd")
 DEVICE_TYPE = b"mmmm"  # MIDI Effect
 
-# Optional: also copy to Ableton User Library if it exists
-USER_LIBRARY = r"D:\program files\ableton live song\User Library\Presets\MIDI Effects\Max MIDI Effect"
+# Copy to all known Ableton User Library locations (whichever exist)
+USER_LIBRARIES = [
+    r"C:\Users\djhar\Documents\Ableton\User Library\Presets\MIDI Effects\Max MIDI Effect",
+    r"D:\program files\ableton live song\User Library\Presets\MIDI Effects\Max MIDI Effect",
+]
 
 
 def build_amxd(maxpat_path: str, amxd_path: str, device_type: bytes = DEVICE_TYPE) -> int:
@@ -58,15 +61,18 @@ def main() -> int:
     total = build_amxd(MAXPAT, AMXD_OUT)
     print(f"Built: {AMXD_OUT}  ({total} bytes)")
 
-    if os.path.isdir(USER_LIBRARY):
-        for fn in ("KemuriBeatPlugin.amxd", "kemuri_generator.js", "kemuri_reader.js"):
-            src = os.path.join(HERE, fn)
-            dst = os.path.join(USER_LIBRARY, fn)
-            if os.path.isfile(src):
-                shutil.copy2(src, dst)
-                print(f"Copied -> {dst}")
-    else:
-        print(f"(User Library not found, skipped copy: {USER_LIBRARY})")
+    copied_any = False
+    for lib in USER_LIBRARIES:
+        if os.path.isdir(lib):
+            for fn in ("KemuriBeatPlugin.amxd", "kemuri_generator.js", "kemuri_reader.js"):
+                src = os.path.join(HERE, fn)
+                dst = os.path.join(lib, fn)
+                if os.path.isfile(src):
+                    shutil.copy2(src, dst)
+                    print(f"Copied -> {dst}")
+            copied_any = True
+    if not copied_any:
+        print("(User Library not found, skipped copy)")
 
     return 0
 
