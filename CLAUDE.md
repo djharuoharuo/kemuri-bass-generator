@@ -112,6 +112,28 @@ python build_amxd.py
 これで `.amxd` を再生成し、Ableton User Library にも自動コピーされる。
 Ableton 側では **プラグインをトラックから一度削除→再ドラッグ** で読み直し。
 
+---
+
+## 🔴 新しい Max for Live プロジェクトを作るときの必須知識
+
+`.maxpat` の拡張子を `.amxd` に変えるだけでは **Ableton に認識されない**。
+`.amxd` はバイナリヘッダ付きの特殊フォーマットのため、変換スクリプトが必要。
+
+### 手順
+
+1. `build_amxd.py` を新プロジェクトにコピー
+2. 以下の2行を新しいファイル名に変更：
+
+```python
+MAXPAT   = os.path.join(HERE, "新しいパッチ名.maxpat")
+AMXD_OUT = os.path.join(HERE, "新しいパッチ名.amxd")
+```
+
+3. `USER_LIBRARIES` のパスを確認（Ableton の User Library がどこにあるか）
+4. `python build_amxd.py` を実行 → `.amxd` 生成 + User Library に自動コピー
+
+Max エディタを一切開かなくても Ableton のブラウザ（Max for Live カテゴリ）に出てくる。
+
 ### Python 側を更新したとき
 
 ```bash
