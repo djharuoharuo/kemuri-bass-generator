@@ -24,9 +24,8 @@ MAXPAT   = os.path.join(HERE, "KemuriBeatPlugin.maxpat")
 AMXD_OUT = os.path.join(HERE, "KemuriBeatPlugin.amxd")
 DEVICE_TYPE = b"mmmm"  # MIDI Effect
 
-# Copy to all known Ableton User Library locations (whichever exist)
+# Copy to Ableton User Library
 USER_LIBRARIES = [
-    r"C:\Users\djhar\Documents\Ableton\User Library\Presets\MIDI Effects\Max MIDI Effect",
     r"D:\program files\ableton live song\User Library\Presets\MIDI Effects\Max MIDI Effect",
 ]
 
