@@ -187,8 +187,9 @@ var NINTH_PATTERNS = [
         { pos: 3.5,  dur: 0.5, pitch: 0 } ] }
 ];
 
-// User-supplied MIDI-derived patterns can be appended to this array
-// in future (Phase B of the hybrid plan).
+// User-supplied learned patterns. Populated by learn_patterns.py which
+// writes between the LEARNED-PATTERNS markers below. All four arrays
+// default to empty until learning has been run.
 var USER_PATTERNS = [];
 
 var SCALE_MAJOR  = [0,2,4,5,7,9,11];
@@ -521,32 +522,55 @@ function _applyVariations(pat, p, producer) {
     return out;
 }
 
+// Merge a hardcoded library with optional learned patterns (Phase B).
+// `learnedVar` should be a global like USER_PATTERNS_PREMIER.
+function _mergeWithLearned(hardLib, learnedLib) {
+    if (!learnedLib || !learnedLib.length) return hardLib;
+    return hardLib.concat(learnedLib);
+}
+
 // ── Style 1: Premier ───────────────────────────────────────────
 function genPremier(p) {
-    return _applyVariations(_pickPattern(PREMIER_PATTERNS), p, "premier");
+    var lib = _mergeWithLearned(PREMIER_PATTERNS,
+        (typeof USER_PATTERNS_PREMIER !== "undefined") ? USER_PATTERNS_PREMIER : []);
+    return _applyVariations(_pickPattern(lib), p, "premier");
 }
 
 // ── Style 2: J Dilla ───────────────────────────────────────────
 function genDilla(p) {
-    return _applyVariations(_pickPattern(DILLA_PATTERNS), p, "dilla");
+    var lib = _mergeWithLearned(DILLA_PATTERNS,
+        (typeof USER_PATTERNS_DILLA !== "undefined") ? USER_PATTERNS_DILLA : []);
+    return _applyVariations(_pickPattern(lib), p, "dilla");
 }
 
 // ── Style 3: 9th Wonder ────────────────────────────────────────
 function genNinth(p) {
-    return _applyVariations(_pickPattern(NINTH_PATTERNS), p, "ninth");
+    var lib = _mergeWithLearned(NINTH_PATTERNS,
+        (typeof USER_PATTERNS_NINTH !== "undefined") ? USER_PATTERNS_NINTH : []);
+    return _applyVariations(_pickPattern(lib), p, "ninth");
 }
 
 // ── Style 0: Boom-Bap Mix ──────────────────────────────────────
 // Each bar randomly draws from one of the three producer libraries,
 // giving the long-form clip a varied "all-producer mixtape" feel.
+// Learned patterns (USER_PATTERNS_* + USER_PATTERNS general pool) are
+// included automatically when available.
 function genBoomBap(p) {
     var libs = [
-        { lib: PREMIER_PATTERNS, tag: "premier" },
-        { lib: DILLA_PATTERNS,   tag: "dilla"   },
-        { lib: NINTH_PATTERNS,   tag: "ninth"   }
+        { lib: _mergeWithLearned(PREMIER_PATTERNS,
+            (typeof USER_PATTERNS_PREMIER !== "undefined") ? USER_PATTERNS_PREMIER : []),
+          tag: "premier" },
+        { lib: _mergeWithLearned(DILLA_PATTERNS,
+            (typeof USER_PATTERNS_DILLA !== "undefined") ? USER_PATTERNS_DILLA : []),
+          tag: "dilla" },
+        { lib: _mergeWithLearned(NINTH_PATTERNS,
+            (typeof USER_PATTERNS_NINTH !== "undefined") ? USER_PATTERNS_NINTH : []),
+          tag: "ninth" }
     ];
-    // Also pull from USER_PATTERNS if populated (Phase B)
-    if (USER_PATTERNS.length > 0) libs.push({ lib: USER_PATTERNS, tag: "user" });
+    // Untagged learned patterns pool (loose WAVs not in a producer subfolder)
+    if (USER_PATTERNS && USER_PATTERNS.length > 0) {
+        libs.push({ lib: USER_PATTERNS, tag: "user" });
+    }
     var pick = libs[Math.floor(Math.random() * libs.length)];
     return _applyVariations(_pickPattern(pick.lib), p, pick.tag);
 }

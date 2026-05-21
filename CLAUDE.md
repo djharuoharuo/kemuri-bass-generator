@@ -177,9 +177,58 @@ python main.py
 
 ## 拡張のヒント
 
-- **新スタイル追加**: `kemuri_generator.js` の `STYLES` 配列に `{name, base, extras, fill}` を追加
+- **新スタイル追加**: `kemuri_generator.js` の `STYLES` 配列に名前を、`generateBar()` の `switch` に分岐を追加。パターン定義は producer-style pattern library 形式（`PREMIER_PATTERNS` 等を参考）が扱いやすい
 - **音域変更**: `BASS_MIN`, `BASS_MAX` 定数を変える（現在 28-47, E1-B2）
 - **OSC ポート変更**: Python `osc_sender.py` と patcher 内の `udpreceive 8001` の両方を変える
+
+---
+
+## WAV→ベースパターン学習パイプライン
+
+`learn_patterns.py` を実行すると、`training_data/` 配下の WAV から
+ベースラインを抽出して `kemuri_generator.js` の `USER_PATTERNS*` に注入する。
+
+### フォルダ構成
+
+```
+training_data/
+  premier/   *.wav    ← Premier 系の参考曲（USER_PATTERNS_PREMIER に追加）
+  dilla/     *.wav    ← Dilla 系（USER_PATTERNS_DILLA に追加）
+  9th/       *.wav    ← 9th Wonder 系（USER_PATTERNS_NINTH に追加）
+  *.wav              ← サブフォルダ無しは USER_PATTERNS (一般プール) へ
+```
+
+### パイプライン
+
+```
+WAV → Demucs (bass stem)
+    → basic-pitch (audio → MIDI)
+    → pattern_extractor.py (1小節パターン × 相対インターバル化)
+    → pattern_writer.py (kemuri_generator.js に注入)
+    → build_amxd.py (.amxd 再生成)
+```
+
+### 実行
+
+```bash
+python learn_patterns.py                # ./training_data を使う
+python learn_patterns.py path/to/wavs   # カスタム
+python learn_patterns.py --no-cache     # キャッシュ無視で全曲再処理
+```
+
+初回は Demucs モデル（約300MB）の自動DLが入る。1曲あたり30秒〜1分（CPU）。
+2回目以降は `.pattern_cache.json` で mtime 一致のファイルはスキップ。
+
+### 地雷ポイント
+
+- **basic-pitch は Python 3.11 までを公式サポート**（3.12 以降は要動作確認）。
+  Python 3.13 でインストール失敗するなら 3.11 に切り替えると確実。
+- **生成器側 (`kemuri_generator.js`) は学習データが入った状態でリビルド必須**。
+  `learn_patterns.py` は最後に `build_amxd.py` を自動実行する。
+- **Boom-Bap Mix モードは USER_PATTERNS 系を自動で混ぜる**。
+  個別 Style（Premier / Dilla / 9th）はそのプロデューサーの学習パターンのみマージ。
+- 注入箇所は JS 内の `// ─ LEARNED-PATTERNS-START ─` / `END` マーカー間。
+  再実行は idempotent（重複しない）。
 
 ---
 

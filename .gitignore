@@ -21,3 +21,12 @@ desktop.ini
 # Logs / temp
 *.log
 *.tmp
+
+# Learning pipeline — keep folder structure, ignore audio + cache
+training_data/**/*.wav
+training_data/**/*.mp3
+training_data/**/*.flac
+training_data/**/*.aiff
+training_data/**/*.aif
+training_data/**/*.m4a
+learning/.pattern_cache.json

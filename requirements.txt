@@ -5,3 +5,9 @@ midiutil>=1.2.1
 python-osc>=1.8.3
 tkinterdnd2>=0.3.0
 numpy>=1.24.0
+
+# WAV → MIDI 学習パイプライン（learn_patterns.py 用）
+# Demucs は torch を内部利用。CPU でも動くがやや重い (300MB モデル)
+demucs>=4.0.0
+basic-pitch>=0.4.0
+pretty_midi>=0.2.10
