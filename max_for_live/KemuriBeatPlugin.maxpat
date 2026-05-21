@@ -55,11 +55,11 @@
 					"presentation_rect" : [ 50.0, 19.0, 110.0, 15.0 ],
 					"saved_attribute_attributes" : 					{
 						"valueof" : 						{
-							"parameter_enum" : [ "Boom-Bap", "Soul-Jazz", "Funk", "Lo-Fi" ],
+							"parameter_enum" : [ "Boom-Bap Mix", "Premier", "J Dilla", "9th Wonder", "Soul-Jazz", "Funk", "Lo-Fi" ],
 							"parameter_initial" : [ 0 ],
 							"parameter_initial_enable" : 1,
 							"parameter_longname" : "Style",
-							"parameter_mmax" : 3,
+							"parameter_mmax" : 6,
 							"parameter_modmode" : 0,
 							"parameter_shortname" : "Style",
 							"parameter_type" : 2

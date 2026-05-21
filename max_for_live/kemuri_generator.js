@@ -38,32 +38,158 @@ var g_density              = 0;
 var g_suggestedComplexity  = -1;
 var g_useProgression       = false;
 
-// ── Style patterns ────────────────────────────────────────────
+// ── Style names (kept for status display + legacy menu compat) ─
+// Pattern data lives in producer-specific libraries below.
 var STYLES = [
-    // 0: Boom-Bap
-    { name: "Boom-Bap",
-      base:   [{o:0,   d:1.0,  v:1.0 },{o:2,   d:0.75, v:0.9 },{o:3,   d:0.5,  v:0.75},{o:3.5, d:0.5,  v:0.7 }],
-      extras: [{o:1.5, d:0.5,  v:0.65},{o:2.5, d:0.25, v:0.6 }],
-      fill:   [{o:3,   d:0.25, v:0.85},{o:3.25,d:0.25, v:0.8 },{o:3.5, d:0.25, v:0.75},{o:3.75,d:0.25, v:0.7 }] },
-    // 1: Soul-Jazz
-    { name: "Soul-Jazz",
-      base:   [{o:0,   d:0.5,  v:1.0 },{o:0.5, d:0.5,  v:0.75},{o:1,   d:0.5,  v:0.85},{o:1.5, d:0.5,  v:0.7 },
-               {o:2,   d:0.5,  v:0.9 },{o:2.5, d:0.5,  v:0.75},{o:3,   d:0.5,  v:0.8 },{o:3.5, d:0.5,  v:0.7 }],
-      extras: [{o:0.75,d:0.25, v:0.6 },{o:1.75,d:0.25, v:0.6 },{o:2.75,d:0.25, v:0.6 }],
-      fill:   [{o:2.5, d:0.25, v:0.8 },{o:2.75,d:0.25, v:0.75},{o:3,   d:0.25, v:0.85},{o:3.25,d:0.25, v:0.8 },{o:3.5, d:0.25, v:0.75},{o:3.75,d:0.25, v:0.7 }] },
-    // 2: Funk
-    { name: "Funk",
-      base:   [{o:0,   d:0.25, v:1.0 },{o:0.5, d:0.25, v:0.7 },{o:0.75,d:0.25, v:0.65},{o:1,   d:0.25, v:0.85},
-               {o:1.5, d:0.25, v:0.7 },{o:2,   d:0.25, v:0.9 },{o:2.25,d:0.25, v:0.6 },{o:2.75,d:0.25, v:0.65},
-               {o:3,   d:0.25, v:0.8 },{o:3.5, d:0.25, v:0.7 },{o:3.75,d:0.25, v:0.6 }],
-      extras: [{o:0.25,d:0.25, v:0.55},{o:1.25,d:0.25, v:0.55},{o:2.5, d:0.25, v:0.55}],
-      fill:   [{o:3,   d:0.25, v:0.9 },{o:3.25,d:0.25, v:0.8 },{o:3.5, d:0.25, v:0.85},{o:3.75,d:0.25, v:0.75}] },
-    // 3: Lo-Fi
-    { name: "Lo-Fi",
-      base:   [{o:0,   d:1.5,  v:0.85},{o:2,   d:1.0,  v:0.75},{o:3,   d:1.0,  v:0.7 }],
-      extras: [{o:1.5, d:0.5,  v:0.6 },{o:3.5, d:0.5,  v:0.55}],
-      fill:   [{o:2.5, d:0.5,  v:0.7 },{o:3,   d:0.5,  v:0.65},{o:3.5, d:0.5,  v:0.6 }] }
+    { name: "Boom-Bap Mix" },   // 0: random pick from Premier / Dilla / 9th
+    { name: "Premier" },        // 1: DJ Premier style
+    { name: "J Dilla" },        // 2: J Dilla style
+    { name: "9th Wonder" },     // 3: 9th Wonder style
+    { name: "Soul-Jazz" },      // 4: walking bass
+    { name: "Funk" },           // 5: 16th groove
+    { name: "Lo-Fi" }           // 6: sparse
 ];
+
+// ── Boom-Bap producer pattern libraries ────────────────────────
+// Each pattern = one bar (4 beats). pitch tokens:
+//   numbers   = chromatic offset from chord root (0=root, 7=5th, 12=octave)
+//   "3rd"     = chord 3rd (maj3 or min3 depending on chord quality)
+//   "5th"     = perfect 5th above root
+//   "b7"      = minor 7th
+//   "octave"  = +12
+//   "p2"-"p5" = 2nd-5th note of pentatonic scale of current chord
+//   "approach-1" / "approach+1" = chromatic below/above NEXT bar's root
+//   "approach-2" = whole step below next root
+// Patterns are picked at random; each then goes through applyVariations().
+//
+// Research sources: transcription-based analysis of producer signature bass lines,
+// genre-defining tracks (Mass Appeal/Devil's Pie/Nas Is Like/Donuts/Fall in Love/
+// Threads/Lovin' It etc.) and documented production techniques.
+
+// DJ Premier — sparse, kick-locked, chromatic walks, sample-driven
+// Tempo feel: 90-95 BPM, 4/4 with strong 2 & 4 backbeat
+var PREMIER_PATTERNS = [
+    { name: "PRM_basic_pump", notes: [
+        { pos: 0,   dur: 0.5,  pitch: 0 },
+        { pos: 1.5, dur: 0.5,  pitch: 0 },
+        { pos: 3,   dur: 0.75, pitch: 0 } ] },
+    { name: "PRM_octave_call", notes: [
+        { pos: 0,   dur: 0.5,  pitch: 0 },
+        { pos: 2,   dur: 0.5,  pitch: "octave" },
+        { pos: 2.5, dur: 0.5,  pitch: 0 } ] },
+    { name: "PRM_chromatic_walk", notes: [
+        { pos: 0,   dur: 1.5,  pitch: 0 },
+        { pos: 2,   dur: 0.5,  pitch: 0 },
+        { pos: 2.5, dur: 0.5,  pitch: "p2" },
+        { pos: 3,   dur: 0.5,  pitch: "p3" },
+        { pos: 3.5, dur: 0.5,  pitch: "5th" } ] },
+    { name: "PRM_pedal_sparse", notes: [
+        { pos: 0,   dur: 1.0,  pitch: 0 },
+        { pos: 2.5, dur: 0.5,  pitch: 0 },
+        { pos: 3,   dur: 0.5,  pitch: 0 } ] },
+    { name: "PRM_anticipate_3", notes: [
+        { pos: 0,   dur: 0.5,  pitch: 0 },
+        { pos: 1,   dur: 0.5,  pitch: 0 },
+        { pos: 2.75,dur: 0.25, pitch: 0 },
+        { pos: 3,   dur: 1.0,  pitch: 0 } ] },
+    { name: "PRM_5th_color", notes: [
+        { pos: 0,   dur: 0.5,  pitch: 0 },
+        { pos: 1.5, dur: 0.5,  pitch: "5th" },
+        { pos: 2,   dur: 0.5,  pitch: 0 },
+        { pos: 3,   dur: 1.0,  pitch: 0 } ] },
+    { name: "PRM_swing_skip", notes: [
+        { pos: 0,   dur: 0.5,  pitch: 0 },
+        { pos: 2,   dur: 0.5,  pitch: 0 },
+        { pos: 2.5, dur: 0.25, pitch: 0 },
+        { pos: 3.5, dur: 0.5,  pitch: 0 } ] }
+];
+
+// J Dilla — drunk timing, octave drops, 16th anticipations, deep sub
+// Tempo feel: 85-95 BPM with intentional micro-timing pushes/pulls
+var DILLA_PATTERNS = [
+    { name: "DLA_anticipation", jitter: 0.04, notes: [
+        { pos: 0,   dur: 0.5,  pitch: 0 },
+        { pos: 1.5, dur: 0.5,  pitch: 0 },
+        { pos: 3,   dur: 0.5,  pitch: 0 } ] },
+    { name: "DLA_octave_drop", jitter: 0.04, notes: [
+        { pos: 0,    dur: 0.25, pitch: "octave" },
+        { pos: 0.25, dur: 0.75, pitch: 0 },
+        { pos: 2,    dur: 0.5,  pitch: 0 },
+        { pos: 3.5,  dur: 0.5,  pitch: 0 } ] },
+    { name: "DLA_skip_2", jitter: 0.05, notes: [
+        { pos: 0,    dur: 0.75, pitch: 0 },
+        { pos: 1.75, dur: 0.25, pitch: 0 },
+        { pos: 2,    dur: 0.5,  pitch: 0 },
+        { pos: 3,    dur: 0.5,  pitch: 0 } ] },
+    { name: "DLA_dotted_pulse", jitter: 0.06, notes: [
+        { pos: 0,    dur: 0.75, pitch: 0 },
+        { pos: 0.75, dur: 0.75, pitch: 0 },
+        { pos: 1.5,  dur: 0.5,  pitch: "octave" },
+        { pos: 3,    dur: 1.0,  pitch: 0 } ] },
+    { name: "DLA_late_drop", jitter: 0.05, notes: [
+        { pos: 0.25, dur: 0.5,  pitch: 0 },
+        { pos: 2,    dur: 0.5,  pitch: 0 },
+        { pos: 2.5,  dur: 0.5,  pitch: 0 },
+        { pos: 3.75, dur: 0.25, pitch: 0 } ] },
+    { name: "DLA_dub_octave", jitter: 0.04, notes: [
+        { pos: 0,    dur: 0.5,  pitch: 0 },
+        { pos: 0.5,  dur: 0.5,  pitch: "octave" },
+        { pos: 2,    dur: 0.5,  pitch: 0 },
+        { pos: 2.5,  dur: 0.5,  pitch: "octave" } ] },
+    { name: "DLA_sub_lean", jitter: 0.06, notes: [
+        { pos: 0,    dur: 1.25, pitch: 0 },
+        { pos: 1.5,  dur: 0.25, pitch: 0 },
+        { pos: 2.25, dur: 0.5,  pitch: 0 },
+        { pos: 3,    dur: 1.0,  pitch: 0 } ] }
+];
+
+// 9th Wonder — clean, melodic, chord-tone-aware, soul-influenced
+// Tempo feel: 85-95 BPM, more "on the grid" than Dilla
+var NINTH_PATTERNS = [
+    { name: "9TH_melodic_5th", notes: [
+        { pos: 0,   dur: 0.5, pitch: 0 },
+        { pos: 1.5, dur: 0.5, pitch: "5th" },
+        { pos: 2,   dur: 0.5, pitch: 0 },
+        { pos: 3.5, dur: 0.5, pitch: "octave" } ] },
+    { name: "9TH_third_arpeg", notes: [
+        { pos: 0,   dur: 0.5, pitch: 0 },
+        { pos: 1,   dur: 0.5, pitch: "3rd" },
+        { pos: 2,   dur: 0.5, pitch: "5th" },
+        { pos: 3,   dur: 1.0, pitch: 0 } ] },
+    { name: "9TH_walk_up", notes: [
+        { pos: 0,   dur: 0.5, pitch: 0 },
+        { pos: 1.5, dur: 0.5, pitch: "p2" },
+        { pos: 2,   dur: 0.5, pitch: "3rd" },
+        { pos: 3,   dur: 0.5, pitch: "5th" },
+        { pos: 3.5, dur: 0.5, pitch: 0 } ] },
+    { name: "9TH_soul_pump", notes: [
+        { pos: 0,   dur: 0.5, pitch: 0 },
+        { pos: 1.5, dur: 0.5, pitch: 0 },
+        { pos: 2,   dur: 0.5, pitch: "5th" },
+        { pos: 3,   dur: 0.5, pitch: 0 },
+        { pos: 3.5, dur: 0.5, pitch: "octave" } ] },
+    { name: "9TH_octave_pulse", notes: [
+        { pos: 0,   dur: 0.5, pitch: 0 },
+        { pos: 1,   dur: 0.5, pitch: "octave" },
+        { pos: 2,   dur: 0.5, pitch: 0 },
+        { pos: 3,   dur: 0.5, pitch: "octave" } ] },
+    { name: "9TH_neighbor_tone", notes: [
+        { pos: 0,   dur: 0.5, pitch: 0 },
+        { pos: 1,   dur: 0.25, pitch: "p2" },
+        { pos: 1.25,dur: 0.75, pitch: 0 },
+        { pos: 2.5, dur: 0.5, pitch: "5th" },
+        { pos: 3.5, dur: 0.5, pitch: 0 } ] },
+    { name: "9TH_root_5_oct", notes: [
+        { pos: 0,    dur: 0.5, pitch: 0 },
+        { pos: 0.75, dur: 0.5, pitch: "5th" },
+        { pos: 2,    dur: 0.5, pitch: "octave" },
+        { pos: 2.75, dur: 0.5, pitch: "5th" },
+        { pos: 3.5,  dur: 0.5, pitch: 0 } ] }
+];
+
+// User-supplied MIDI-derived patterns can be appended to this array
+// in future (Phase B of the hybrid plan).
+var USER_PATTERNS = [];
 
 var SCALE_MAJOR  = [0,2,4,5,7,9,11];
 var SCALE_MINOR  = [0,2,3,5,7,8,10];
@@ -170,8 +296,8 @@ function generate() {
 function buildNotes(bpm) {
     var notes = [];
     var fillBars = (g_fill <= 0) ? 0 : Math.min(4, Math.ceil(g_fill / 25.0));
-    // Jazz uses half-bar resolution (ii-V etc.); other styles use 1-bar
-    var useHalfBar = (g_style === 1);
+    // Soul-Jazz uses half-bar resolution (ii-V etc.); other styles use 1-bar
+    var useHalfBar = (g_style === 4);
 
     for (var bar = 0; bar < g_bars; bar++) {
         var chordsThis = _chordAtBar(bar, useHalfBar);
@@ -273,74 +399,156 @@ function snapNear(midi, anchor) {
 // ── Per-style bar generators ───────────────────────────────────
 function generateBar(style, p) {
     switch (style) {
-        case 0: return genBoomBap(p);
-        case 1: return genSoulJazz(p);
-        case 2: return genFunk(p);
-        case 3: return genLoFi(p);
+        case 0: return genBoomBap(p);    // Boom-Bap Mix
+        case 1: return genPremier(p);
+        case 2: return genDilla(p);
+        case 3: return genNinth(p);
+        case 4: return genSoulJazz(p);
+        case 5: return genFunk(p);
+        case 6: return genLoFi(p);
         default: return genBoomBap(p);
     }
 }
 
-// ── Style 0: Boom-Bap ──────────────────────────────────────────
-// Root-heavy sub-bass, syncopated, lots of space, occasional octave drops.
-// Turnaround uses chromatic approach (b2 below next root) or 5th.
-function genBoomBap(p) {
-    var ctx   = p.ctx;
-    var notes = [];
-    var root  = snapNear(ctx.lowAnchor, ctx.lowAnchor);   // sub-bass root
-    var oct   = clampBass(root + 12);
-    var fifth = clampBass(root + 7);
-    var comp  = p.compFactor;
-
-    // Beat 1: root (the foundation)
-    notes.push({ pitch: root, start: 0.0, dur: 0.5 });
-
-    // "And of 2" — J Dilla style anticipation hit
-    if (Math.random() < 0.45 + comp * 0.35) {
-        notes.push({ pitch: root, start: 1.5, dur: 0.5 });
+// ── Pattern resolution & variation helpers ─────────────────────
+// Resolve a pattern-pitch token to an absolute MIDI note in the bass range.
+function _resolvePitch(token, ctx, nextCtx) {
+    var anchor = ctx.lowAnchor;
+    if (typeof token === "number") {
+        return clampBass(anchor + token);
     }
-
-    // Beat 3: either root again, or octave-up call-and-response
-    if (Math.random() < 0.5 + comp * 0.3) {
-        // octave call
-        notes.push({ pitch: oct, start: 2.0, dur: 0.5 });
-        if (Math.random() < 0.6) {
-            notes.push({ pitch: root, start: 2.5, dur: 0.5 });   // response
+    if (typeof token === "string") {
+        switch (token) {
+            case "3rd":    return clampBass(anchor + (ctx.isMinor ? 3 : 4));
+            case "5th":    return clampBass(anchor + 7);
+            case "b7":     return clampBass(anchor + 10);
+            case "octave": return clampBass(anchor + 12);
+            case "p2":     return clampBass(anchor + ctx.penta[1]);
+            case "p3":     return clampBass(anchor + ctx.penta[2]);
+            case "p4":     return clampBass(anchor + ctx.penta[3]);
+            case "p5":     return clampBass(anchor + ctx.penta[4]);
+            case "approach-1":  return clampBass(nextCtx.lowAnchor - 1);
+            case "approach+1":  return clampBass(nextCtx.lowAnchor + 1);
+            case "approach-2":  return clampBass(nextCtx.lowAnchor - 2);
         }
-    } else {
-        notes.push({ pitch: root, start: 2.0, dur: 0.75 });
+    }
+    return clampBass(anchor);   // fallback
+}
+
+// Pick one pattern from a producer library (could weight in future).
+function _pickPattern(lib) {
+    return lib[Math.floor(Math.random() * lib.length)];
+}
+
+// Apply micro-variations: octave swap, ghost notes, drop notes, timing jitter.
+// Then attach turnaround / fill / climax based on phrase position.
+function _applyVariations(pat, p, producer) {
+    var notes = [];
+    var c     = p.compFactor;
+    var ctx   = p.ctx;
+    var nctx  = p.nextCtx;
+
+    for (var i = 0; i < pat.notes.length; i++) {
+        var orig = pat.notes[i];
+
+        // Drop off-beat notes occasionally (low complexity = sparser)
+        if (orig.pos !== 0 && Math.random() < (0.18 - c * 0.12)) continue;
+
+        var pitch = _resolvePitch(orig.pitch, ctx, nctx);
+
+        // Octave swap (complexity scales chance)
+        if (Math.random() < (0.04 + c * 0.18)) {
+            var swap = clampBass(pitch + (Math.random() < 0.5 ? 12 : -12));
+            pitch = swap;
+        }
+
+        var pos = orig.pos;
+        // Dilla micro-timing
+        if (producer === "dilla" && pat.jitter) {
+            pos += (Math.random() - 0.5) * 2 * pat.jitter;
+            if (pos < 0) pos = 0;
+            if (pos > 3.9) pos = 3.9;
+        }
+
+        notes.push({ pos: pos, dur: orig.dur, pitch: pitch });
     }
 
-    // Ghost / extras on weak 16ths driven by complexity
-    if (comp > 0.4 && Math.random() < comp * 0.5) {
-        var ghostPos = (Math.random() < 0.5) ? 0.75 : 2.75;
-        notes.push({ pitch: root, start: ghostPos, dur: 0.25 });
+    // Add a ghost / extra note (complexity-driven)
+    if (Math.random() < c * 0.45) {
+        var ghostSlots = [0.75, 1.25, 1.75, 2.25, 2.75];
+        var gp = ghostSlots[Math.floor(Math.random() * ghostSlots.length)];
+        // Avoid overlapping existing note within 0.2 beats
+        var clash = false;
+        for (var j = 0; j < notes.length; j++) {
+            if (Math.abs(notes[j].pos - gp) < 0.2) { clash = true; break; }
+        }
+        if (!clash) {
+            var ghostPitch = (Math.random() < 0.75)
+                ? clampBass(ctx.lowAnchor)
+                : clampBass(ctx.lowAnchor + 12);
+            notes.push({ pos: gp, dur: 0.25, pitch: ghostPitch });
+        }
     }
 
-    // Turnaround on last bar of 4-bar phrase — approach NEXT bar's actual root
-    if (p.isLastOfPhrase) {
-        var nextRoot = clampBass(p.nextCtx.lowAnchor);
-        // Half-step approach from above or below
-        var approach = clampBass(nextRoot + (Math.random() < 0.5 ? -1 : 1));
-        notes.push({ pitch: approach, start: 3.5, dur: 0.5 });
-    }
-
-    // Development (8/16-bar last bar): bigger climactic move targeting next root
+    // ── Turnaround / fill / climax ──────────────────────────────
+    var nRoot = clampBass(nctx.lowAnchor);
     if (p.isFinalClimax) {
+        // Strip anything past beat 2.75, then pentatonic walk into next root
+        notes = notes.filter(function(n) { return n.pos < 2.75; });
         var pent = ctx.penta;
-        var nRoot = clampBass(p.nextCtx.lowAnchor);
-        notes.push({ pitch: clampBass(root + pent[1]), start: 3.0,  dur: 0.25 });
-        notes.push({ pitch: clampBass(root + pent[2]), start: 3.25, dur: 0.25 });
-        notes.push({ pitch: clampBass(nRoot - 2),      start: 3.5,  dur: 0.25 });
-        notes.push({ pitch: clampBass(nRoot - 1),      start: 3.75, dur: 0.25 });
+        notes.push({ pos: 3.0,  dur: 0.25, pitch: clampBass(ctx.lowAnchor + pent[1]) });
+        notes.push({ pos: 3.25, dur: 0.25, pitch: clampBass(ctx.lowAnchor + pent[2]) });
+        notes.push({ pos: 3.5,  dur: 0.25, pitch: clampBass(nRoot - 2) });
+        notes.push({ pos: 3.75, dur: 0.25, pitch: clampBass(nRoot - 1) });
+    } else if (p.isLastOfPhrase) {
+        // Replace anything at/after 3.5 with chromatic approach to nRoot
+        notes = notes.filter(function(n) { return n.pos < 3.4; });
+        var dir = (Math.random() < 0.5) ? -1 : 1;
+        notes.push({ pos: 3.5, dur: 0.5, pitch: clampBass(nRoot + dir) });
     } else if (p.isFill) {
-        // Lighter fill — one extra pentatonic note before turnaround
+        // Lighter fill — pentatonic flourish at beat 3
         var pIdx = 1 + Math.floor(Math.random() * 3);
-        notes.push({ pitch: clampBass(root + ctx.penta[pIdx]),
-                     start: 3.0, dur: 0.25 });
+        notes.push({ pos: 3.0, dur: 0.25,
+                     pitch: clampBass(ctx.lowAnchor + ctx.penta[pIdx]) });
     }
 
-    return notes;
+    // Sort by position and convert to {pitch,start,dur}
+    notes.sort(function(a, b) { return a.pos - b.pos; });
+    var out = [];
+    for (var k = 0; k < notes.length; k++) {
+        out.push({ pitch: notes[k].pitch, start: notes[k].pos, dur: notes[k].dur });
+    }
+    return out;
+}
+
+// ── Style 1: Premier ───────────────────────────────────────────
+function genPremier(p) {
+    return _applyVariations(_pickPattern(PREMIER_PATTERNS), p, "premier");
+}
+
+// ── Style 2: J Dilla ───────────────────────────────────────────
+function genDilla(p) {
+    return _applyVariations(_pickPattern(DILLA_PATTERNS), p, "dilla");
+}
+
+// ── Style 3: 9th Wonder ────────────────────────────────────────
+function genNinth(p) {
+    return _applyVariations(_pickPattern(NINTH_PATTERNS), p, "ninth");
+}
+
+// ── Style 0: Boom-Bap Mix ──────────────────────────────────────
+// Each bar randomly draws from one of the three producer libraries,
+// giving the long-form clip a varied "all-producer mixtape" feel.
+function genBoomBap(p) {
+    var libs = [
+        { lib: PREMIER_PATTERNS, tag: "premier" },
+        { lib: DILLA_PATTERNS,   tag: "dilla"   },
+        { lib: NINTH_PATTERNS,   tag: "ninth"   }
+    ];
+    // Also pull from USER_PATTERNS if populated (Phase B)
+    if (USER_PATTERNS.length > 0) libs.push({ lib: USER_PATTERNS, tag: "user" });
+    var pick = libs[Math.floor(Math.random() * libs.length)];
+    return _applyVariations(_pickPattern(pick.lib), p, pick.tag);
 }
 
 // ── Style 1: Soul-Jazz (walking bass, half-bar harmony) ───────
